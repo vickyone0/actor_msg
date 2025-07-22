@@ -1,69 +1,81 @@
 use actix::prelude::*;
-use actix_web::{web, App, HttpServer, HttpRequest, HttpResponse, Responder};
 
 
+//Define the actor
+struct CounterActor {
+    count: usize,
+}
 
+impl Actor for CounterActor {
+
+    type Context = Context<Self>;   
+}
+
+
+//Define the message to increment the counter
 #[derive(Message)]
-#[rtype(result = "Result<String, ()>")]
-struct UserMessage {
-    id: String,
-    name: String,
-}
+#[rtype(result = "usize")]
+struct Increment;
 
-// === Actor ===
 
-struct UserActor;
+//implement the handler for the Increment message
+impl  Handler<Increment> for CounterActor {
+    type Result = usize;
 
-impl Actor for UserActor {
-    type Context = Context<Self>;
-}
-
-impl Handler<UserMessage> for UserActor {
-    type Result = Result<String, ()>;
-
-    fn handle(&mut self, msg: UserMessage, _ctx: &mut Self::Context) -> Self::Result {
-        let response = format!("User processed - id: {}, name: {}", msg.id, msg.name);
-        Ok(response)
+    fn handle(&mut self, _msg: Increment, _ctx: &mut Self::Context) -> Self::Result {
+        self.count += 1;
+        self.count
     }
 }
 
-// === Web Handlers ===
+//Define the message to decrement the counter
+#[derive(Message)]
+#[rtype(result = "usize")]
+struct Decrement;
 
-async fn greet(req: HttpRequest) -> impl Responder {
-    let name = req.match_info().get("name").unwrap_or("World");
-    HttpResponse::Ok().body(format!("Hello, {}!", name))
-}
-
-async fn greet_diff(
-    req: HttpRequest,
-    user_actor: web::Data<Addr<UserActor>>,
-) -> impl Responder {
-    let id = req.match_info().get("id").unwrap_or("unknown").to_string();
-    let name = req.match_info().get("name").unwrap_or("unknown").to_string();
-
-    match user_actor.send(UserMessage { id, name }).await {
-        Ok(Ok(response)) => HttpResponse::Ok().body(response),
-        Ok(Err(_)) => HttpResponse::InternalServerError().body("Actor returned an error"),
-        Err(_) => HttpResponse::InternalServerError().body("Failed to send message to actor"),
+//implement the handler for the Decrement message
+impl Handler<Decrement> for CounterActor {
+    type Result = usize;
+    fn handle(&mut self, _msg: Decrement, _ctx: &mut Self::Context) -> Self::Result {
+        if self.count > 0 {
+            self.count -= 1;
+        }
+        self.count
     }
 }
 
-// === Main Function ===
+//Define the message to get the current count
+#[derive(Message)]
+#[rtype(result = "usize")]
+struct GetCount;
+
+//implement the handler for the GetCount message
+impl Handler<GetCount> for CounterActor {
+    type Result = usize;
+
+    fn handle(&mut self, _msg: GetCount, _ctx: &mut Self::Context) -> Self::Result {
+        self.count
+    }
+}
 
 #[actix_rt::main]
-async fn main() -> std::io::Result<()> {
-    // Start the actor
-    let user_actor = UserActor.start();
+async fn main() -> Result<(),()> {
 
-    // Start the HTTP server
-    HttpServer::new(move || {
-        App::new()
-            .app_data(web::Data::new(user_actor.clone())) 
-            .route("/", web::get().to(greet))
-            .route("/{name}", web::get().to(greet))
-            .route("/user/{id}/{name}", web::get().to(greet_diff)) 
-    })
-    .bind("127.0.0.1:8080")?
-    .run()
-    .await
+    //Start the actor
+    let addr = CounterActor { count: 0 }.start();
+
+    //Send Increment messages
+    addr.send(Increment).await.unwrap();
+    addr.send(Increment).await.unwrap();
+
+
+    //Send GetCount message
+    let count = addr.send(GetCount).await.unwrap();
+    println!("Current count: {}", count);
+
+    //Send Decrement message
+    let count = addr.send(Decrement).await.unwrap();
+    println!("Count after decrement: {}", count);
+
+    Ok(())
 }
